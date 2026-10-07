@@ -1,0 +1,37 @@
+name: Fetch SOXX/QQQ + KR ETF data
+
+on:
+  schedule:
+    # 매일(월~금) UTC 22:00 = 한국시간(KST) 07:00
+    # 미국 증시 마감(동부시간 16:00, 서머타임 여부에 따라 UTC 20:00~21:00) 이후로 여유를 둔 시각입니다.
+    - cron: "0 22 * * 1-5"
+  workflow_dispatch: {}   # 저장소 Actions 탭에서 "Run workflow"로 수동 실행도 가능
+
+permissions:
+  contents: write   # 받아온 데이터 파일을 저장소에 커밋하기 위해 필요
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 코드 가져오기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 필요한 패키지 설치
+        run: pip install --upgrade yfinance pandas
+
+      - name: fetch_data.py 실행 (SOXX/QQQ + 국내 ETF 데이터 다운로드)
+        run: python fetch_data.py
+
+      - name: 변경된 데이터 파일 커밋 & 푸시
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add merged_data.json merged_data.csv kr_etf_data.json soxx_raw.csv qqq_raw.csv kr_381180_raw.csv kr_426030_raw.csv
+          git diff --cached --quiet && echo "변경 없음 (휴장일 등) - 커밋 생략" || git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
+          git push
