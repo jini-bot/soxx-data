@@ -2,19 +2,16 @@ name: Fetch SOXX/QQQ + KR ETF data
 
 on:
   schedule:
+    # 한국시간(KST, UTC+9) 기준 월~토 07:00 / 08:00 / 12:00 / 16:00 에 자동 실행
+    # (요일 숫자는 UTC 기준 요일이라 KST와 다를 수 있어 각 줄마다 변환해 두었습니다)
     - cron: "0 22 * * 0-5"   # KST 07:00 (월~토)
     - cron: "0 23 * * 0-5"   # KST 08:00 (월~토)
     - cron: "0 3 * * 1-6"    # KST 12:00 (월~토)
     - cron: "0 7 * * 1-6"    # KST 16:00 (월~토)
-  workflow_dispatch: {}
-
-# 동시 실행 시 충돌 방지
-concurrency:
-  group: fetch-data-job
-  cancel-in-progress: true
+  workflow_dispatch: {}   # 저장소 Actions 탭에서 "Run workflow"로 수동 실행도 가능
 
 permissions:
-  contents: write
+  contents: write   # 받아온 데이터 파일을 저장소에 커밋하기 위해 필요
 
 jobs:
   fetch:
@@ -22,8 +19,6 @@ jobs:
     steps:
       - name: 저장소 코드 가져오기
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # pull/rebase를 위해 전체 이력 가져오기
 
       - name: 파이썬 설치
         uses: actions/setup-python@v5
@@ -41,10 +36,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add merged_data.json merged_data.csv merged_data_recent20.json kr_etf_data.json kr_etf_data_recent20.json soxx_raw.csv qqq_raw.csv kr_381180_raw.csv kr_426030_raw.csv
-          if ! git diff --cached --quiet; then
-            git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
-            git pull --rebase origin main
-            git push
-          else
-            echo "변경 없음 (휴장일 등) - 커밋 생략"
-          fi
+          git diff --cached --quiet && echo "변경 없음 (휴장일 등) - 커밋 생략" || git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
+          git push
+
+
+
