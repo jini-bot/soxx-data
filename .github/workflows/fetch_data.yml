@@ -36,5 +36,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add merged_data.json merged_data.csv merged_data_recent20.json kr_etf_data.json kr_etf_data_recent20.json soxx_raw.csv qqq_raw.csv kr_381180_raw.csv kr_426030_raw.csv
-          git diff --cached --quiet && echo "변경 없음 (휴장일 등) - 커밋 생략" || git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
-          git push
+          if ! git diff --cached --quiet; then
+            git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
+            git pull --rebase origin main
+            git push
+          else
+            echo "변경 없음 (휴장일 등) - 커밋 생략"
+          fi
