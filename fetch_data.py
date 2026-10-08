@@ -54,6 +54,7 @@ except ImportError:
 START_DATE = "2001-07-09"
 TICKERS = ["SOXX", "QQQ"]
 OUT_DIR = Path(__file__).resolve().parent
+RECENT_DAYS = 20  # 경량 갱신용 "최근 N일" 파일에 담을 거래일 수
 
 # 국내 상장 ETF (참고/모니터링용 - SOXX·QQQ 백테스트와는 별도로 다룸)
 # 야후 파이낸스 티커는 한국거래소(KRX) 상장 종목코드 뒤에 ".KS"를 붙인 형태입니다.
@@ -142,10 +143,18 @@ def main():
     with open(json_out, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False)
 
+    # 최근 N일치만 담은 경량 파일 (웹앱에서 매번 전체(2001년~)를 받지 않고
+    # 가벼운 갱신만 할 수 있도록 함 - GitHub Actions 자동 갱신용)
+    recent_json_out = OUT_DIR / "merged_data_recent20.json"
+    recent_records = records[-RECENT_DAYS:]
+    with open(recent_json_out, "w", encoding="utf-8") as f:
+        json.dump(recent_records, f, ensure_ascii=False)
+
     n_missing_qqq = int(merged["qqq_close"].isna().sum())
 
     print("-" * 60)
     print(f"완료: {csv_out.name}, {json_out.name} 생성 ({len(merged)}행)")
+    print(f"완료: {recent_json_out.name} 생성 (최근 {len(recent_records)}행)")
     print(f"기간: {merged['date'].iloc[0]} ~ {merged['date'].iloc[-1]}")
     if n_missing_qqq > 0:
         print(f"[참고] QQQ 종가가 비어있는 날짜가 {n_missing_qqq}건 있습니다 "
@@ -209,6 +218,20 @@ def fetch_kr_etfs():
         json.dump(result, f, ensure_ascii=False)
     print(f"완료: {out_path.name} 생성됨 ({', '.join(result.keys())})")
     print("이 파일을 backtest.html의 \"데이터\" 탭 > \"국내 상장 ETF 불러오기\"에서 불러오면 됩니다.")
+
+    # 최근 N일치만 담은 경량 파일 (웹앱 자동/URL 갱신용)
+    result_recent20 = {
+        code: {
+            "name": info["name"],
+            "yahoo_ticker": info["yahoo_ticker"],
+            "rows": info["rows"][-RECENT_DAYS:],
+        }
+        for code, info in result.items()
+    }
+    recent_out_path = OUT_DIR / "kr_etf_data_recent20.json"
+    with open(recent_out_path, "w", encoding="utf-8") as f:
+        json.dump(result_recent20, f, ensure_ascii=False)
+    print(f"완료: {recent_out_path.name} 생성됨 (최근 {RECENT_DAYS}일)")
 
 
 if __name__ == "__main__":
