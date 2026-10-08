@@ -2,9 +2,12 @@ name: Fetch SOXX/QQQ + KR ETF data
 
 on:
   schedule:
-    # 매일(월~금) UTC 22:00 = 한국시간(KST) 07:00
-    # 미국 증시 마감(동부시간 16:00, 서머타임 여부에 따라 UTC 20:00~21:00) 이후로 여유를 둔 시각입니다.
-    - cron: "0 22 * * 1-5"
+    # 한국시간(KST, UTC+9) 기준 월~토 07:00 / 08:00 / 12:00 / 16:00 에 자동 실행
+    # (요일 숫자는 UTC 기준 요일이라 KST와 다를 수 있어 각 줄마다 변환해 두었습니다)
+    - cron: "0 22 * * 0-5"   # KST 07:00 (월~토)
+    - cron: "0 23 * * 0-5"   # KST 08:00 (월~토)
+    - cron: "0 3 * * 1-6"    # KST 12:00 (월~토)
+    - cron: "0 7 * * 1-6"    # KST 16:00 (월~토)
   workflow_dispatch: {}   # 저장소 Actions 탭에서 "Run workflow"로 수동 실행도 가능
 
 permissions:
@@ -32,6 +35,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add merged_data.json merged_data.csv kr_etf_data.json soxx_raw.csv qqq_raw.csv kr_381180_raw.csv kr_426030_raw.csv
+          git add merged_data.json merged_data.csv merged_data_recent20.json kr_etf_data.json kr_etf_data_recent20.json soxx_raw.csv qqq_raw.csv kr_381180_raw.csv kr_426030_raw.csv
           git diff --cached --quiet && echo "변경 없음 (휴장일 등) - 커밋 생략" || git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
           git push
