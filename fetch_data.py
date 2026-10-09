@@ -10,6 +10,9 @@ SOXX / QQQ 일별 시세 데이터를 API(yfinance)로 다운로드하는 PC 전
     qqq_raw.csv        : QQQ 원본 데이터
     merged_data.csv     : 백테스트 프로그램(backtest.html)이 사용하는 병합 데이터 (CSV)
     merged_data.json    : 백테스트 프로그램(backtest.html)이 사용하는 병합 데이터 (JSON, 더 빠르게 로딩됨)
+    kr_etf_data.json    : 국내 상장 ETF(TIGER필반/TIME나스닥100) 참고 데이터
+    ref_index_data.json : SOX지수(1993년~)/VIX/미국10년물금리 참고/분석용 데이터
+    (위 3개 파일은 각각 최근 20일치만 담은 _recent20.json 버전도 함께 생성됩니다)
 
 사용법
 ------
@@ -61,6 +64,19 @@ RECENT_DAYS = 20  # 경량 갱신용 "최근 N일" 파일에 담을 거래일 �
 KR_TICKERS = {
     "381180": {"yahoo": "381180.KS", "name": "TIGER 미국필라델피아반도체나스닥"},
     "426030": {"yahoo": "426030.KS", "name": "TIME 미국나스닥100액티브"},
+}
+
+# 전략 분석/검증용 참고 지표 (SOXX/QQQ 백테스트·매매신호와는 완전히 분리되어 있으며 참고용입니다)
+# - sox: 필라델피아 반도체지수. SOXX ETF(2001년 상장)보다 역사가 길어(1990년대부터)
+#        닷컴버블 붕괴 등 과거 극단적 하락장까지 포함해 전략을 검증해볼 수 있습니다.
+# - vix: VIX(변동성지수). 시장 공포심리 측정 - 매수/매도 타이밍 보조지표로 활용 가능.
+# - tnx: 미국 10년물 국채금리. 반도체주는 금리 민감도가 높아 금리 레짐별 분석에 활용.
+#        주의: 야후의 ^TNX 지수값은 실제 금리(%)의 10배로 표시됩니다
+#        (예: 지수값 42.5 = 실제 금리 4.25%). 아래에서 10으로 나눠 실제 %로 저장합니다.
+REF_INDICES = {
+    "sox": {"yahoo": "^SOX", "name": "필라델피아 반도체지수", "start": "1993-01-01", "divide_by": 1},
+    "vix": {"yahoo": "^VIX", "name": "VIX(변동성지수)", "start": "1990-01-01", "divide_by": 1},
+    "tnx": {"yahoo": "^TNX", "name": "미국 10년물 국채금리(%)", "start": "1990-01-01", "divide_by": 10},
 }
 
 
@@ -163,6 +179,72 @@ def main():
     print(f"생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     fetch_kr_etfs()
+    fetch_reference_indices()
+
+
+def fetch_reference_indices():
+    """SOX지수/VIX/미국10년물금리를 참고/분석용으로 한 파일(ref_index_data.json)에
+    함께 저장합니다. SOXX/QQQ 백테스트 데이터와는 완전히 분리되어 있으며,
+    이 단계가 실패해도(또는 일부 지표만 실패해도) 위 merged_data.json / kr_etf_data.json
+    생성에는 영향이 없습니다. 지표 하나가 실패해도 나머지는 계속 받아옵니다."""
+    print("-" * 60)
+    print(" 참고 지표(SOX지수/VIX/미국10년물금리) 다운로드 (참고/분석용)")
+    print("-" * 60)
+
+    result = {}
+    for code, meta in REF_INDICES.items():
+        yahoo_ticker = meta["yahoo"]
+        name = meta["name"]
+        start = meta["start"]
+        divide_by = meta.get("divide_by", 1)
+        try:
+            print(f"[다운로드 중] {name} ({yahoo_ticker}) ... (기간: {start} ~ 오늘)")
+            df = yf.download(
+                yahoo_ticker,
+                start=start,
+                auto_adjust=False,
+                progress=False,
+                threads=True,
+            )
+            if df is None or df.empty:
+                print(f"  -> [경고] {name} 데이터를 가져오지 못했습니다 (건너뜀).")
+                continue
+            df = df.reset_index()
+            df = _flatten_columns(df)
+            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
+            df = df.dropna(subset=["Close"])
+            df = df.sort_values("Date")
+
+            csv_path = OUT_DIR / f"ref_{code}_raw.csv"
+            df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+            rows = [
+                {"date": d, "close": round(float(c) / divide_by, 4)}
+                for d, c in zip(df["Date"], df["Close"])
+            ]
+            result[code] = {"name": name, "yahoo_ticker": yahoo_ticker, "rows": rows}
+            print(f"  -> 저장됨: {csv_path.name} ({len(rows)}행, {rows[0]['date']} ~ {rows[-1]['date']})")
+        except Exception as e:
+            print(f"  -> [경고] {name} 다운로드 중 오류 발생: {e} (건너뜀).")
+            continue
+
+    if not result:
+        print("[경고] 참고 지표를 하나도 받아오지 못했습니다. ref_index_data.json을 생성하지 않습니다.")
+        return
+
+    out_path = OUT_DIR / "ref_index_data.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False)
+    print(f"완료: {out_path.name} 생성됨 ({', '.join(result.keys())})")
+
+    recent_result = {
+        code: {"name": info["name"], "yahoo_ticker": info["yahoo_ticker"], "rows": info["rows"][-RECENT_DAYS:]}
+        for code, info in result.items()
+    }
+    recent_out_path = OUT_DIR / "ref_index_data_recent20.json"
+    with open(recent_out_path, "w", encoding="utf-8") as f:
+        json.dump(recent_result, f, ensure_ascii=False)
+    print(f"완료: {recent_out_path.name} 생성됨 (최근 {RECENT_DAYS}일)")
 
 
 def fetch_kr_etfs():
