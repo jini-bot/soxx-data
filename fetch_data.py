@@ -1,320 +1,40 @@
-# -*- coding: utf-8 -*-
-"""
-fetch_data.py
-==============================================================
-SOXX / QQQ 일별 시세 데이터를 API(yfinance)로 다운로드하는 PC 전용 스크립트.
+name: Fetch SOXX/QQQ + KR ETF + reference indices (SOX/VIX/TNX/WTI/DXY/KRW) data
 
-- 2001-07-09 부터 오늘까지의 일별 OHLCV 데이터를 내려받습니다.
-- 결과물:
-    soxx_raw.csv       : SOXX 원본 데이터
-    qqq_raw.csv        : QQQ 원본 데이터
-    merged_data.csv     : 백테스트 프로그램(backtest.html)이 사용하는 병합 데이터 (CSV)
-    merged_data.json    : 백테스트 프로그램(backtest.html)이 사용하는 병합 데이터 (JSON, 더 빠르게 로딩됨)
-    kr_etf_data.json    : 국내 상장 ETF(TIGER필반/TIME나스닥100) 참고 데이터
-    ref_index_data.json : SOX지수(1993년~)/VIX/미국10년물금리 참고/분석용 데이터
-    (위 3개 파일은 각각 최근 20일치만 담은 _recent20.json 버전도 함께 생성됩니다)
+on:
+  schedule:
+    # 한국시간(KST, UTC+9) 기준 월~토 07:00 / 08:00 / 12:00 / 16:00 에 자동 실행
+    # (요일 숫자는 UTC 기준 요일이라 KST와 다를 수 있어 각 줄마다 변환해 두었습니다)
+    - cron: "0 22 * * 0-5"   # KST 07:00 (월~토)
+    - cron: "0 23 * * 0-5"   # KST 08:00 (월~토)
+    - cron: "0 3 * * 1-6"    # KST 12:00 (월~토)
+    - cron: "0 7 * * 1-6"    # KST 16:00 (월~토)
+  workflow_dispatch: {}   # 저장소 Actions 탭에서 "Run workflow"로 수동 실행도 가능
 
-사용법
-------
-1) (최초 1회) 필요한 패키지 설치
-       pip install yfinance pandas --upgrade
-   * 회사/개인 PC 환경에 따라 python 대신 python3, pip 대신 pip3 를 써야 할 수 있습니다.
+permissions:
+  contents: write   # 받아온 데이터 파일을 저장소에 커밋하기 위해 필요
 
-2) 실행
-       python fetch_data.py
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 코드 가져오기
+        uses: actions/checkout@v4
 
-3) 실행 후 같은 폴더에 생성된 merged_data.json 파일을
-   backtest.html 에서 "데이터 불러오기" 버튼으로 불러오면 됩니다.
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-4) 이 스크립트는 인터넷 연결이 필요합니다(시세를 새로 받아올 때만).
-   반대로 backtest.html 은 한 번 데이터를 불러온 뒤에는
-   완전히 오프라인(인터넷 없이) PC/휴대폰에서 동작합니다.
+      - name: 필요한 패키지 설치
+        run: pip install --upgrade yfinance pandas
 
-주기적으로 최신 데이터를 반영하려면 이 스크립트를 다시 실행해서
-merged_data.json 을 새로 만든 뒤, backtest.html 에서 다시 불러오면 됩니다.
-==============================================================
-"""
+      - name: fetch_data.py 실행 (SOXX/QQQ + 국내 ETF + 참고지표(SOX/VIX/TNX/WTI/DXY/KRW) 데이터 다운로드)
+        run: python fetch_data.py
 
-import sys
-import json
-from pathlib import Path
-from datetime import datetime
-
-try:
-    import pandas as pd
-except ImportError:
-    print("[오류] pandas 가 설치되어 있지 않습니다. 아래 명령으로 설치하세요:")
-    print("       pip install pandas")
-    sys.exit(1)
-
-try:
-    import yfinance as yf
-except ImportError:
-    print("[오류] yfinance 가 설치되어 있지 않습니다. 아래 명령으로 설치하세요:")
-    print("       pip install yfinance")
-    sys.exit(1)
-
-START_DATE = "2001-07-09"
-TICKERS = ["SOXX", "QQQ"]
-OUT_DIR = Path(__file__).resolve().parent
-RECENT_DAYS = 20  # 경량 갱신용 "최근 N일" 파일에 담을 거래일 수
-
-# 국내 상장 ETF (참고/모니터링용 - SOXX·QQQ 백테스트와는 별도로 다룸)
-# 야후 파이낸스 티커는 한국거래소(KRX) 상장 종목코드 뒤에 ".KS"를 붙인 형태입니다.
-KR_TICKERS = {
-    "381180": {"yahoo": "381180.KS", "name": "TIGER 미국필라델피아반도체나스닥"},
-    "426030": {"yahoo": "426030.KS", "name": "TIME 미국나스닥100액티브"},
-}
-
-# 전략 분석/검증용 참고 지표 (SOXX/QQQ 백테스트·매매신호와는 완전히 분리되어 있으며 참고용입니다)
-# - sox: 필라델피아 반도체지수. SOXX ETF(2001년 상장)보다 역사가 길어(1990년대부터)
-#        닷컴버블 붕괴 등 과거 극단적 하락장까지 포함해 전략을 검증해볼 수 있습니다.
-# - vix: VIX(변동성지수). 시장 공포심리 측정 - 매수/매도 타이밍 보조지표로 활용 가능.
-# - tnx: 미국 10년물 국채금리. 반도체주는 금리 민감도가 높아 금리 레짐별 분석에 활용.
-#        주의: 야후의 ^TNX 지수값은 실제 금리(%)의 10배로 표시됩니다
-#        (예: 지수값 42.5 = 실제 금리 4.25%). 아래에서 10으로 나눠 실제 %로 저장합니다.
-REF_INDICES = {
-    "sox": {"yahoo": "^SOX", "name": "필라델피아 반도체지수", "start": "1993-01-01", "divide_by": 1},
-    "vix": {"yahoo": "^VIX", "name": "VIX(변동성지수)", "start": "1990-01-01", "divide_by": 1},
-    "tnx": {"yahoo": "^TNX", "name": "미국 10년물 국채금리(%)", "start": "1990-01-01", "divide_by": 10},
-}
-
-
-def _flatten_columns(df):
-    """yfinance 버전에 따라 MultiIndex 컬럼이 나올 수 있어 평탄화 처리."""
-    new_cols = []
-    for c in df.columns:
-        if isinstance(c, tuple):
-            new_cols.append(c[0])
-        else:
-            new_cols.append(c)
-    df.columns = new_cols
-    return df
-
-
-def fetch_ticker(ticker: str) -> pd.DataFrame:
-    print(f"[다운로드 중] {ticker} ... (기간: {START_DATE} ~ 오늘)")
-    df = yf.download(
-        ticker,
-        start=START_DATE,
-        auto_adjust=False,   # 원본 종가(Close) 유지. 배당/분할 보정은 Adj Close 참고용으로만 사용
-        progress=False,
-        threads=True,
-    )
-    if df is None or df.empty:
-        raise RuntimeError(
-            f"{ticker} 데이터를 가져오지 못했습니다. "
-            f"인터넷 연결 또는 티커명을 확인해주세요."
-        )
-    df = df.reset_index()
-    df = _flatten_columns(df)
-    # 컬럼명 정리 (Date, Open, High, Low, Close, Adj Close, Volume)
-    df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
-    return df
-
-
-def main():
-    print("=" * 60)
-    print(" SOXX / QQQ 데이터 다운로드")
-    print("=" * 60)
-
-    data = {}
-    for t in TICKERS:
-        df = fetch_ticker(t)
-        csv_path = OUT_DIR / f"{t.lower()}_raw.csv"
-        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-        print(
-            f"  -> 저장됨: {csv_path.name}  "
-            f"({len(df)}행, {df['Date'].iloc[0]} ~ {df['Date'].iloc[-1]})"
-        )
-        data[t] = df.set_index("Date")
-
-    soxx = data["SOXX"]
-    qqq = data["QQQ"]
-
-    # 두 종목을 날짜 기준으로 병합 (SOXX 거래일 기준, QQQ 값을 매칭)
-    merged = pd.DataFrame(index=soxx.index)
-    merged["soxx_open"] = soxx["Open"]
-    merged["soxx_high"] = soxx["High"]
-    merged["soxx_low"] = soxx["Low"]
-    merged["soxx_close"] = soxx["Close"]
-    merged["soxx_volume"] = soxx["Volume"]
-    merged["qqq_close"] = qqq["Close"].reindex(soxx.index)
-
-    merged = merged.dropna(subset=["soxx_close"])
-    merged = merged.sort_index()
-    merged.index.name = "date"
-    merged = merged.reset_index()
-
-    # 숫자형 정리
-    for col in ["soxx_open", "soxx_high", "soxx_low", "soxx_close", "qqq_close"]:
-        merged[col] = merged[col].astype(float).round(4)
-    merged["soxx_volume"] = merged["soxx_volume"].fillna(0).astype("int64")
-
-    csv_out = OUT_DIR / "merged_data.csv"
-    merged.to_csv(csv_out, index=False, encoding="utf-8-sig")
-
-    json_out = OUT_DIR / "merged_data.json"
-    records = merged.to_dict(orient="records")
-    with open(json_out, "w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False)
-
-    # 최근 N일치만 담은 경량 파일 (웹앱에서 매번 전체(2001년~)를 받지 않고
-    # 가벼운 갱신만 할 수 있도록 함 - GitHub Actions 자동 갱신용)
-    recent_json_out = OUT_DIR / "merged_data_recent20.json"
-    recent_records = records[-RECENT_DAYS:]
-    with open(recent_json_out, "w", encoding="utf-8") as f:
-        json.dump(recent_records, f, ensure_ascii=False)
-
-    n_missing_qqq = int(merged["qqq_close"].isna().sum())
-
-    print("-" * 60)
-    print(f"완료: {csv_out.name}, {json_out.name} 생성 ({len(merged)}행)")
-    print(f"완료: {recent_json_out.name} 생성 (최근 {len(recent_records)}행)")
-    print(f"기간: {merged['date'].iloc[0]} ~ {merged['date'].iloc[-1]}")
-    if n_missing_qqq > 0:
-        print(f"[참고] QQQ 종가가 비어있는 날짜가 {n_missing_qqq}건 있습니다 "
-              f"(거래정지/데이터 누락일 가능성).")
-    print("이제 merged_data.json 파일을 backtest.html 에서 불러오면 됩니다.")
-    print(f"생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    fetch_kr_etfs()
-    fetch_reference_indices()
-
-
-def fetch_reference_indices():
-    """SOX지수/VIX/미국10년물금리를 참고/분석용으로 한 파일(ref_index_data.json)에
-    함께 저장합니다. SOXX/QQQ 백테스트 데이터와는 완전히 분리되어 있으며,
-    이 단계가 실패해도(또는 일부 지표만 실패해도) 위 merged_data.json / kr_etf_data.json
-    생성에는 영향이 없습니다. 지표 하나가 실패해도 나머지는 계속 받아옵니다."""
-    print("-" * 60)
-    print(" 참고 지표(SOX지수/VIX/미국10년물금리) 다운로드 (참고/분석용)")
-    print("-" * 60)
-
-    result = {}
-    for code, meta in REF_INDICES.items():
-        yahoo_ticker = meta["yahoo"]
-        name = meta["name"]
-        start = meta["start"]
-        divide_by = meta.get("divide_by", 1)
-        try:
-            print(f"[다운로드 중] {name} ({yahoo_ticker}) ... (기간: {start} ~ 오늘)")
-            df = yf.download(
-                yahoo_ticker,
-                start=start,
-                auto_adjust=False,
-                progress=False,
-                threads=True,
-            )
-            if df is None or df.empty:
-                print(f"  -> [경고] {name} 데이터를 가져오지 못했습니다 (건너뜀).")
-                continue
-            df = df.reset_index()
-            df = _flatten_columns(df)
-            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
-            df = df.dropna(subset=["Close"])
-            df = df.sort_values("Date")
-
-            csv_path = OUT_DIR / f"ref_{code}_raw.csv"
-            df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-
-            rows = [
-                {"date": d, "close": round(float(c) / divide_by, 4)}
-                for d, c in zip(df["Date"], df["Close"])
-            ]
-            result[code] = {"name": name, "yahoo_ticker": yahoo_ticker, "rows": rows}
-            print(f"  -> 저장됨: {csv_path.name} ({len(rows)}행, {rows[0]['date']} ~ {rows[-1]['date']})")
-        except Exception as e:
-            print(f"  -> [경고] {name} 다운로드 중 오류 발생: {e} (건너뜀).")
-            continue
-
-    if not result:
-        print("[경고] 참고 지표를 하나도 받아오지 못했습니다. ref_index_data.json을 생성하지 않습니다.")
-        return
-
-    out_path = OUT_DIR / "ref_index_data.json"
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False)
-    print(f"완료: {out_path.name} 생성됨 ({', '.join(result.keys())})")
-
-    recent_result = {
-        code: {"name": info["name"], "yahoo_ticker": info["yahoo_ticker"], "rows": info["rows"][-RECENT_DAYS:]}
-        for code, info in result.items()
-    }
-    recent_out_path = OUT_DIR / "ref_index_data_recent20.json"
-    with open(recent_out_path, "w", encoding="utf-8") as f:
-        json.dump(recent_result, f, ensure_ascii=False)
-    print(f"완료: {recent_out_path.name} 생성됨 (최근 {RECENT_DAYS}일)")
-
-
-def fetch_kr_etfs():
-    """국내 상장 ETF(TIGER 필라델피아반도체나스닥, TIME 나스닥100액티브)를
-    참고/모니터링용으로 별도 파일(kr_etf_data.json)에 저장합니다.
-    SOXX/QQQ 백테스트 데이터와는 완전히 분리되어 있으며,
-    이 단계가 실패해도 위 merged_data.json 생성에는 영향이 없습니다."""
-    print("-" * 60)
-    print(" 국내 상장 ETF 다운로드 (참고/모니터링용)")
-    print("-" * 60)
-
-    result = {}
-    for code, meta in KR_TICKERS.items():
-        yahoo_ticker = meta["yahoo"]
-        name = meta["name"]
-        try:
-            print(f"[다운로드 중] {name} ({yahoo_ticker}) ...")
-            df = yf.download(
-                yahoo_ticker,
-                start=START_DATE,
-                auto_adjust=False,
-                progress=False,
-                threads=True,
-            )
-            if df is None or df.empty:
-                print(f"  -> [경고] {name} 데이터를 가져오지 못했습니다 (건너뜀).")
-                continue
-            df = df.reset_index()
-            df = _flatten_columns(df)
-            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
-            df = df.dropna(subset=["Close"])
-            df = df.sort_values("Date")
-
-            csv_path = OUT_DIR / f"kr_{code}_raw.csv"
-            df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-
-            rows = [
-                {"date": d, "close": round(float(c), 2)}
-                for d, c in zip(df["Date"], df["Close"])
-            ]
-            result[code] = {"name": name, "yahoo_ticker": yahoo_ticker, "rows": rows}
-            print(f"  -> 저장됨: {csv_path.name} ({len(rows)}행, {rows[0]['date']} ~ {rows[-1]['date']})")
-        except Exception as e:
-            print(f"  -> [경고] {name} 다운로드 중 오류 발생: {e} (건너뜀).")
-            continue
-
-    if not result:
-        print("[경고] 국내 ETF 데이터를 하나도 받아오지 못했습니다. kr_etf_data.json을 생성하지 않습니다.")
-        return
-
-    out_path = OUT_DIR / "kr_etf_data.json"
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False)
-    print(f"완료: {out_path.name} 생성됨 ({', '.join(result.keys())})")
-    print("이 파일을 backtest.html의 \"데이터\" 탭 > \"국내 상장 ETF 불러오기\"에서 불러오면 됩니다.")
-
-    # 최근 N일치만 담은 경량 파일 (웹앱 자동/URL 갱신용)
-    result_recent20 = {
-        code: {
-            "name": info["name"],
-            "yahoo_ticker": info["yahoo_ticker"],
-            "rows": info["rows"][-RECENT_DAYS:],
-        }
-        for code, info in result.items()
-    }
-    recent_out_path = OUT_DIR / "kr_etf_data_recent20.json"
-    with open(recent_out_path, "w", encoding="utf-8") as f:
-        json.dump(result_recent20, f, ensure_ascii=False)
-    print(f"완료: {recent_out_path.name} 생성됨 (최근 {RECENT_DAYS}일)")
-
-
-if __name__ == "__main__":
-    main()
+      - name: 변경된 데이터 파일 커밋 & 푸시
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add merged_data.json merged_data.csv merged_data_recent20.json kr_etf_data.json kr_etf_data_recent20.json ref_index_data.json ref_index_data_recent20.json soxx_raw.csv qqq_raw.csv kr_381180_raw.csv kr_426030_raw.csv ref_sox_raw.csv ref_vix_raw.csv ref_tnx_raw.csv ref_wti_raw.csv ref_dxy_raw.csv ref_krw_raw.csv
+          git diff --cached --quiet && echo "변경 없음 (휴장일 등) - 커밋 생략" || git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
+          git push
