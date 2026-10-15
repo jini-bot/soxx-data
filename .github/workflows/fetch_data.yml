@@ -1,4 +1,4 @@
-name: Fetch SOXX/QQQ + KR ETF + reference indices (SOX/VIX/TNX/WTI/DXY/KRW) data
+name: Fetch SOXX/QQQ + KR ETF + reference indices (SOX/VIX/TNX/WTI/DXY/KRW/DJI/DJT/GSPC/IRX/HYG/LQD/IEF) + FRED macro data
 
 on:
   schedule:
@@ -28,13 +28,25 @@ jobs:
       - name: 필요한 패키지 설치
         run: pip install --upgrade yfinance pandas
 
-      - name: fetch_data.py 실행 (SOXX/QQQ + 국내 ETF + 참고지표(SOX/VIX/TNX/WTI/DXY/KRW) 데이터 다운로드)
+      - name: fetch_data.py 실행 (SOXX/QQQ + 국내 ETF + 참고지표 + FRED 거시지표 데이터 다운로드)
         run: python fetch_data.py
 
       - name: 변경된 데이터 파일 커밋 & 푸시
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add merged_data.json merged_data.csv merged_data_recent20.json kr_etf_data.json kr_etf_data_recent20.json ref_index_data.json ref_index_data_recent20.json soxx_raw.csv qqq_raw.csv kr_381180_raw.csv kr_426030_raw.csv ref_sox_raw.csv ref_vix_raw.csv ref_tnx_raw.csv ref_wti_raw.csv ref_dxy_raw.csv ref_krw_raw.csv
+          # 지표 중 일부가 그날 받아오지 못해 파일이 생성되지 않았더라도(휴장일, 일시적 접속 오류 등)
+          # 나머지 파일들은 정상적으로 커밋되도록 파일 하나씩 개별적으로 add 하고, 없는 파일은 조용히 건너뜁니다.
+          for f in merged_data.json merged_data.csv merged_data_recent20.json \
+            kr_etf_data.json kr_etf_data_recent20.json \
+            ref_index_data.json ref_index_data_recent20.json \
+            fred_data.json fred_data_recent20.json \
+            soxx_raw.csv qqq_raw.csv \
+            kr_381180_raw.csv kr_426030_raw.csv \
+            ref_sox_raw.csv ref_vix_raw.csv ref_tnx_raw.csv ref_wti_raw.csv ref_dxy_raw.csv ref_krw_raw.csv \
+            ref_dji_raw.csv ref_djt_raw.csv ref_gspc_raw.csv ref_irx_raw.csv ref_hyg_raw.csv ref_lqd_raw.csv ref_ief_raw.csv \
+            fred_sahm_raw.csv fred_leading_raw.csv fred_t10y2y_raw.csv fred_t10y3m_raw.csv fred_hyspread_raw.csv fred_unrate_raw.csv; do
+            [ -f "$f" ] && git add "$f"
+          done
           git diff --cached --quiet && echo "변경 없음 (휴장일 등) - 커밋 생략" || git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
           git push
