@@ -20,7 +20,10 @@ SOXX / QQQ 일별 시세 데이터를 API(yfinance)로 다운로드하는 PC 전
                           막혀있을 수 있습니다(사내망/방화벽 등). 그런 경우 이 단계만 건너뛰고
                           나머지 파일은 정상적으로 생성됩니다. GitHub Actions(자동 배치) 환경에서는
                           보통 제한 없이 접속됩니다.
-    (위 4개 파일은 각각 최근 20개 데이터만 담은 _recent20.json 버전도 함께 생성됩니다)
+    extra_stocks_data.json : 전략 연구용 개별종목/지수ETF 데이터 (OHLCV: 시가/고가/저가/종가/거래량)
+                          미국: SPY(S&P500 ETF), MU(마이크론)
+                          한국: 삼성전자(005930), SK하이닉스(000660), 농심(004370)
+    (위 5개 파일은 각각 최근 20개 데이터만 담은 _recent20.json 버전도 함께 생성됩니다)
 
 사용법
 ------
@@ -75,6 +78,20 @@ RECENT_DAYS = 20  # 경량 갱신용 "최근 N일" 파일에 담을 거래일 �
 KR_TICKERS = {
     "381180": {"yahoo": "381180.KS", "name": "TIGER 미국필라델피아반도체나스닥"},
     "426030": {"yahoo": "426030.KS", "name": "TIME 미국나스닥100액티브"},
+}
+
+# 전략 연구용 추가 종목 (SOXX 전략 업그레이드 + 한국 개별주 전략 개발용)
+# - 미국: SPY(S&P500 ETF), MU(마이크론 - 메모리 반도체 대표주)
+# - 한국: 야후 티커는 코스피(.KS) / 코스닥(.KQ). 세 종목 모두 코스피 상장.
+#   (한국 종목은 가격이 원화(KRW)이며, 액면분할 등은 Close에 반영되지 않은 원본 종가입니다.
+#    삼성전자는 2018-05 50:1 액면분할이 있었는데 야후는 과거 가격을 분할 조정해서 내려줍니다.
+#    분석 시에는 adj_close 컬럼도 함께 저장하니 배당 포함 수익률이 필요하면 활용하세요.)
+EXTRA_STOCKS = {
+    "spy":     {"yahoo": "SPY",       "name": "SPDR S&P500 ETF(SPY)",   "market": "US", "currency": "USD"},
+    "mu":      {"yahoo": "MU",        "name": "마이크론(MU)",            "market": "US", "currency": "USD"},
+    "005930":  {"yahoo": "005930.KS", "name": "삼성전자",                "market": "KR", "currency": "KRW"},
+    "000660":  {"yahoo": "000660.KS", "name": "SK하이닉스",              "market": "KR", "currency": "KRW"},
+    "004370":  {"yahoo": "004370.KS", "name": "농심",                    "market": "KR", "currency": "KRW"},
 }
 
 # 전략 분석/검증용 참고 지표 (SOXX/QQQ 백테스트·매매신호와는 완전히 분리되어 있으며 참고용입니다)
@@ -235,6 +252,7 @@ def main():
     print(f"생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     fetch_kr_etfs()
+    fetch_extra_stocks()
     fetch_reference_indices()
     fetch_fred_series()
 
@@ -497,6 +515,88 @@ def fetch_kr_etfs():
     recent_out_path = OUT_DIR / "kr_etf_data_recent20.json"
     with open(recent_out_path, "w", encoding="utf-8") as f:
         json.dump(result_recent20, f, ensure_ascii=False)
+    print(f"완료: {recent_out_path.name} 생성됨 (최근 {RECENT_DAYS}일)")
+
+
+def fetch_extra_stocks():
+    """전략 연구용 추가 종목(SPY, 마이크론, 삼성전자, SK하이닉스, 농심)을
+    OHLCV(시가/고가/저가/종가/수정종가/거래량)로 받아 extra_stocks_data.json 에 저장합니다.
+    다른 단계와 완전히 분리되어 있으며, 종목 하나가 실패해도 나머지는 계속 받아오고
+    이 단계 전체가 실패해도 다른 파일 생성에는 영향이 없습니다."""
+    print("-" * 60)
+    print(" 추가 종목 다운로드 (SPY / 마이크론 / 삼성전자 / SK하이닉스 / 농심)")
+    print("-" * 60)
+
+    def _num(v, nd):
+        return None if pd.isna(v) else round(float(v), nd)
+
+    result = {}
+    for code, meta in EXTRA_STOCKS.items():
+        yahoo_ticker = meta["yahoo"]
+        name = meta["name"]
+        nd = 2 if meta["currency"] == "KRW" else 4
+        try:
+            print(f"[다운로드 중] {name} ({yahoo_ticker}) ... (기간: {START_DATE} ~ 오늘)")
+            df = yf.download(
+                yahoo_ticker,
+                start=START_DATE,
+                auto_adjust=False,
+                progress=False,
+                threads=True,
+            )
+            if df is None or df.empty:
+                print(f"  -> [경고] {name} 데이터를 가져오지 못했습니다 (건너뜀).")
+                continue
+            df = df.reset_index()
+            df = _flatten_columns(df)
+            df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
+            df = df.dropna(subset=["Close"])
+            df = df.sort_values("Date")
+
+            csv_path = OUT_DIR / f"extra_{code}_raw.csv"
+            df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+            has_adj = "Adj Close" in df.columns
+            rows = []
+            for _, r in df.iterrows():
+                vol = r.get("Volume")
+                rows.append({
+                    "date": r["Date"],
+                    "open": _num(r.get("Open"), nd),
+                    "high": _num(r.get("High"), nd),
+                    "low": _num(r.get("Low"), nd),
+                    "close": _num(r["Close"], nd),
+                    "adj_close": _num(r["Adj Close"], nd) if has_adj else None,
+                    "volume": 0 if (vol is None or pd.isna(vol)) else int(vol),
+                })
+            result[code] = {
+                "name": name,
+                "yahoo_ticker": yahoo_ticker,
+                "market": meta["market"],
+                "currency": meta["currency"],
+                "rows": rows,
+            }
+            print(f"  -> 저장됨: {csv_path.name} ({len(rows)}행, {rows[0]['date']} ~ {rows[-1]['date']})")
+        except Exception as e:
+            print(f"  -> [경고] {name} 다운로드 중 오류 발생: {e} (건너뜀).")
+            continue
+
+    if not result:
+        print("[경고] 추가 종목 데이터를 하나도 받아오지 못했습니다. extra_stocks_data.json을 생성하지 않습니다.")
+        return
+
+    out_path = OUT_DIR / "extra_stocks_data.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False)
+    print(f"완료: {out_path.name} 생성됨 ({', '.join(result.keys())})")
+
+    recent = {
+        code: {k: v for k, v in info.items() if k != "rows"} | {"rows": info["rows"][-RECENT_DAYS:]}
+        for code, info in result.items()
+    }
+    recent_out_path = OUT_DIR / "extra_stocks_data_recent20.json"
+    with open(recent_out_path, "w", encoding="utf-8") as f:
+        json.dump(recent, f, ensure_ascii=False)
     print(f"완료: {recent_out_path.name} 생성됨 (최근 {RECENT_DAYS}일)")
 
 
