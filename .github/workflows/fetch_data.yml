@@ -2,13 +2,20 @@ name: Fetch SOXX/QQQ + KR ETF + extra stocks (SPY/MU/삼성전자/SK하이닉스
 
 on:
   schedule:
-    # 한국시간(KST, UTC+9) 기준 월~토 07:00 / 08:00 / 12:00 / 16:00 에 자동 실행
-    # (요일 숫자는 UTC 기준 요일이라 KST와 다를 수 있어 각 줄마다 변환해 두었습니다)
-    - cron: "0 22 * * 0-5"   # KST 07:00 (월~토)
-    - cron: "0 23 * * 0-5"   # KST 08:00 (월~토)
-    - cron: "0 3 * * 1-6"    # KST 12:00 (월~토)
-    - cron: "0 7 * * 1-6"    # KST 16:00 (월~토)
+    # 한국시간(KST, UTC+9) 기준 월~토 실행. GitHub 예약 실행은 정각(:00)에 몰려 수 시간 지연/누락되는 일이 있어
+    # 정각을 피한 분 단위로 여러 번 실행합니다. 데이터가 안 바뀌면 커밋을 생략하므로 여러 번 돌아도 안전합니다.
+    # (미국 정규장 마감: 겨울 06:00 KST / 여름 05:00 KST)
+    - cron: "37 21 * * 0-5"   # KST 06:37 (월~토)
+    - cron: "23 22 * * 0-5"   # KST 07:23 (월~토)
+    - cron: "47 23 * * 0-5"   # KST 08:47 (월~토)
+    - cron: "13 1 * * 1-6"    # KST 10:13 (월~토)
+    - cron: "37 3 * * 1-6"    # KST 12:37 (월~토)
+    - cron: "17 7 * * 1-6"    # KST 16:17 (월~토)
   workflow_dispatch: {}   # 저장소 Actions 탭에서 "Run workflow"로 수동 실행도 가능
+
+concurrency:
+  group: fetch-data
+  cancel-in-progress: false
 
 permissions:
   contents: write   # 받아온 데이터 파일을 저장소에 커밋하기 위해 필요
@@ -51,4 +58,5 @@ jobs:
             [ -f "$f" ] && git add "$f"
           done
           git diff --cached --quiet && echo "변경 없음 (휴장일 등) - 커밋 생략" || git commit -m "자동 데이터 갱신 $(date -u +%Y-%m-%d)"
+          git pull --rebase origin main || true
           git push
