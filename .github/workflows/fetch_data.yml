@@ -51,7 +51,7 @@ jobs:
             fred_data.json fred_data_recent20.json \
             soxx_raw.csv qqq_raw.csv \
             kr_381180_raw.csv kr_426030_raw.csv \
-            extra_spy_raw.csv extra_mu_raw.csv extra_005930_raw.csv extra_000660_raw.csv extra_004370_raw.csv \
+            extra_spy_raw.csv extra_mu_raw.csv extra_ibb_raw.csv extra_005930_raw.csv extra_000660_raw.csv extra_004370_raw.csv \
             ref_sox_raw.csv ref_vix_raw.csv ref_tnx_raw.csv ref_wti_raw.csv ref_dxy_raw.csv ref_krw_raw.csv \
             ref_dji_raw.csv ref_djt_raw.csv ref_gspc_raw.csv ref_irx_raw.csv ref_hyg_raw.csv ref_lqd_raw.csv ref_ief_raw.csv \
             fred_sahm_raw.csv fred_leading_raw.csv fred_t10y2y_raw.csv fred_t10y3m_raw.csv fred_hyspread_raw.csv fred_unrate_raw.csv; do
