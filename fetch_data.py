@@ -21,7 +21,7 @@ SOXX / QQQ 일별 시세 데이터를 API(yfinance)로 다운로드하는 PC 전
                           나머지 파일은 정상적으로 생성됩니다. GitHub Actions(자동 배치) 환경에서는
                           보통 제한 없이 접속됩니다.
     extra_stocks_data.json : 전략 연구용 개별종목/지수ETF 데이터 (OHLCV: 시가/고가/저가/종가/거래량)
-                          미국: SPY(S&P500 ETF), MU(마이크론)
+                          미국: SPY(S&P500 ETF), MU(마이크론), IBB(바이오테크 ETF)
                           한국: 삼성전자(005930), SK하이닉스(000660), 농심(004370)
     (위 5개 파일은 각각 최근 20개 데이터만 담은 _recent20.json 버전도 함께 생성됩니다)
 
@@ -81,7 +81,7 @@ KR_TICKERS = {
 }
 
 # 전략 연구용 추가 종목 (SOXX 전략 업그레이드 + 한국 개별주 전략 개발용)
-# - 미국: SPY(S&P500 ETF), MU(마이크론 - 메모리 반도체 대표주)
+# - 미국: SPY(S&P500 ETF), MU(마이크론 - 메모리 반도체 대표주), IBB(바이오 ETF - 매도 후 현금 대체 비교용)
 # - 한국: 야후 티커는 코스피(.KS) / 코스닥(.KQ). 세 종목 모두 코스피 상장.
 #   (한국 종목은 가격이 원화(KRW)이며, 액면분할 등은 Close에 반영되지 않은 원본 종가입니다.
 #    삼성전자는 2018-05 50:1 액면분할이 있었는데 야후는 과거 가격을 분할 조정해서 내려줍니다.
@@ -89,6 +89,7 @@ KR_TICKERS = {
 EXTRA_STOCKS = {
     "spy":     {"yahoo": "SPY",       "name": "SPDR S&P500 ETF(SPY)",   "market": "US", "currency": "USD"},
     "mu":      {"yahoo": "MU",        "name": "마이크론(MU)",            "market": "US", "currency": "USD"},
+    "ibb":     {"yahoo": "IBB",       "name": "iShares 바이오테크 ETF(IBB)", "market": "US", "currency": "USD"},
     "005930":  {"yahoo": "005930.KS", "name": "삼성전자",                "market": "KR", "currency": "KRW"},
     "000660":  {"yahoo": "000660.KS", "name": "SK하이닉스",              "market": "KR", "currency": "KRW"},
     "004370":  {"yahoo": "004370.KS", "name": "농심",                    "market": "KR", "currency": "KRW"},
@@ -519,12 +520,12 @@ def fetch_kr_etfs():
 
 
 def fetch_extra_stocks():
-    """전략 연구용 추가 종목(SPY, 마이크론, 삼성전자, SK하이닉스, 농심)을
+    """전략 연구용 추가 종목(SPY, 마이크론, IBB, 삼성전자, SK하이닉스, 농심)을
     OHLCV(시가/고가/저가/종가/수정종가/거래량)로 받아 extra_stocks_data.json 에 저장합니다.
     다른 단계와 완전히 분리되어 있으며, 종목 하나가 실패해도 나머지는 계속 받아오고
     이 단계 전체가 실패해도 다른 파일 생성에는 영향이 없습니다."""
     print("-" * 60)
-    print(" 추가 종목 다운로드 (SPY / 마이크론 / 삼성전자 / SK하이닉스 / 농심)")
+    print(" 추가 종목 다운로드 (SPY / 마이크론 / IBB / 삼성전자 / SK하이닉스 / 농심)")
     print("-" * 60)
 
     def _num(v, nd):
